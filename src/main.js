@@ -29,8 +29,8 @@ if (CONFIG.API_TOKEN === "__API_TOKEN__") {
   const constraints = {
     video: {
       facingMode: "user",
-      width: { ideal: 1280*2 },
-      height: { ideal: 720*2 }
+      width: { min: 640, ideal: 1280, max: 1920 },
+      height: { min: 480, ideal: 720, max: 1080 }
     },
     audio: false, // Optional: Disable microphone
   }
@@ -146,8 +146,8 @@ if (CONFIG.API_TOKEN === "__API_TOKEN__") {
     mediaStream = await navigator.mediaDevices.getUserMedia({
       video: {
         facingMode: isBackFacing ? "environment" : "user",
-        width: { ideal: 1280*2 },
-      height: { ideal: 720*2 }
+        width: { min: 640, ideal: 1280, max: 1920 },
+        height: { min: 480, ideal: 720, max: 1080 }
       },
     })
 
