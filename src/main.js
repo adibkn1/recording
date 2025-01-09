@@ -28,11 +28,9 @@ if (CONFIG.API_TOKEN === "__API_TOKEN__") {
   //'environment' = back camera
   const constraints = {
     video: {
-      facingMode: "user",
-      width: { min: 640, ideal: 1280, max: 1920 },
-      height: { min: 480, ideal: 720, max: 1080 }
+      facingMode: "user"
     },
-    audio: false, // Optional: Disable microphone
+    audio: false // Optional: Disable microphone
   }
 
   //Get canvas element for live render target
@@ -41,17 +39,22 @@ if (CONFIG.API_TOKEN === "__API_TOKEN__") {
   //Create camera kit session and assign liveRenderTarget canvas to render out live render target from camera kit
   const session = await cameraKit.createSession({ liveRenderTarget })
 
-  // Request media stream with set camera perference
-  let mediaStream = await navigator.mediaDevices.getUserMedia(constraints)
-  const source = createMediaStreamSource(mediaStream, { cameraType: "user" })
+  try {
+    // Request media stream with set camera perference
+    let mediaStream = await navigator.mediaDevices.getUserMedia(constraints)
+    const source = createMediaStreamSource(mediaStream, { cameraType: "user" })
 
-  //Set up source settings so that it renders out correctly on browser
-  await session.setSource(source)
-  //only for front camera use
-  source.setTransform(Transform2D.MirrorX)
-  await source.setRenderSize(window.innerWidth, window.innerHeight)
-  await session.setFPSLimit(60)
-  await session.play() //plays live target by default
+    //Set up source settings so that it renders out correctly on browser
+    await session.setSource(source)
+    //only for front camera use
+    source.setTransform(Transform2D.MirrorX)
+    await source.setRenderSize(window.innerWidth, window.innerHeight)
+    await session.setFPSLimit(60)
+    await session.play() //plays live target by default
+  } catch (error) {
+    console.error('Error accessing camera:', error.name, error.message)
+    alert('Error accessing camera. Please make sure you have granted camera permissions and are using a supported browser.')
+  }
 
   //Assign Lens ID (left) and Group ID(Right) to camera kit
   const lens = await cameraKit.lensRepository.loadLens(lensID, groupID)
@@ -138,31 +141,36 @@ if (CONFIG.API_TOKEN === "__API_TOKEN__") {
   async function updateCamera(session) {
     isBackFacing = !isBackFacing
 
-    if (mediaStream) {
-      session.pause()
-      mediaStream.getVideoTracks()[0].stop()
+    try {
+      if (mediaStream) {
+        session.pause()
+        mediaStream.getVideoTracks()[0].stop()
+      }
+
+      mediaStream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: isBackFacing ? "environment" : "user"
+        }
+      })
+
+      const source = createMediaStreamSource(mediaStream, {
+        // NOTE: This is important for world facing experiences
+        cameraType: isBackFacing ? "environment" : "user",
+      })
+
+      await session.setSource(source)
+      if (!isBackFacing) {
+        source.setTransform(Transform2D.MirrorX)
+      }
+      await source.setRenderSize(window.innerWidth, window.innerHeight)
+
+      await session.play()
+    } catch (error) {
+      console.error('Error switching camera:', error.name, error.message)
+      alert('Failed to switch camera. Please check your device permissions.')
+      // Revert the isBackFacing flag since we failed to switch
+      isBackFacing = !isBackFacing
     }
-
-    mediaStream = await navigator.mediaDevices.getUserMedia({
-      video: {
-        facingMode: isBackFacing ? "environment" : "user",
-        width: { min: 640, ideal: 1280, max: 1920 },
-        height: { min: 480, ideal: 720, max: 1080 }
-      },
-    })
-
-    const source = createMediaStreamSource(mediaStream, {
-      // NOTE: This is important for world facing experiences
-      cameraType: isBackFacing ? "environment" : "user",
-    })
-
-    await session.setSource(source)
-    if (!isBackFacing) {
-      source.setTransform(Transform2D.MirrorX)
-    }
-    await source.setRenderSize(window.innerWidth, window.innerHeight)
-
-    await session.play()
   }
 
   //Function to setup media recorder and start recording
