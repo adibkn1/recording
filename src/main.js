@@ -39,21 +39,59 @@ if (CONFIG.API_TOKEN === "__API_TOKEN__") {
   //Create camera kit session and assign liveRenderTarget canvas to render out live render target from camera kit
   const session = await cameraKit.createSession({ liveRenderTarget })
 
+  //Check if getUserMedia is supported
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    console.error('getUserMedia is not supported');
+    alert('Your browser does not support accessing the camera. Please use a modern browser like Chrome or Firefox.');
+    return;
+  }
+
   try {
-    // Request media stream with set camera perference
-    let mediaStream = await navigator.mediaDevices.getUserMedia(constraints)
-    const source = createMediaStreamSource(mediaStream, { cameraType: "user" })
+    // First check if we have permissions
+    const permissions = await navigator.mediaDevices.enumerateDevices();
+    const videoDevices = permissions.filter(device => device.kind === 'videoinput');
+    
+    if (videoDevices.length === 0) {
+      throw new Error('No video devices found');
+    }
+
+    // Request media stream with set camera preference
+    let mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+    const source = createMediaStreamSource(mediaStream, { cameraType: "user" });
 
     //Set up source settings so that it renders out correctly on browser
-    await session.setSource(source)
+    await session.setSource(source);
     //only for front camera use
-    source.setTransform(Transform2D.MirrorX)
-    await source.setRenderSize(window.innerWidth, window.innerHeight)
-    await session.setFPSLimit(60)
-    await session.play() //plays live target by default
+    source.setTransform(Transform2D.MirrorX);
+    await source.setRenderSize(window.innerWidth, window.innerHeight);
+    await session.setFPSLimit(60);
+    await session.play(); //plays live target by default
   } catch (error) {
-    console.error('Error accessing camera:', error.name, error.message)
-    alert('Error accessing camera. Please make sure you have granted camera permissions and are using a supported browser.')
+    console.error('Error accessing camera:', error.name, error.message);
+    if (error.name === 'NotAllowedError') {
+      alert('Camera access was denied. Please grant camera permissions and reload the page.');
+    } else if (error.name === 'NotFoundError') {
+      alert('No camera found on your device.');
+    } else if (error.name === 'NotReadableError') {
+      alert('Camera is already in use by another application.');
+    } else if (error.name === 'OverconstrainedError') {
+      // If we get an OverconstrainedError, try again with no constraints
+      try {
+        let mediaStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        const source = createMediaStreamSource(mediaStream, { cameraType: "user" });
+        await session.setSource(source);
+        source.setTransform(Transform2D.MirrorX);
+        await source.setRenderSize(window.innerWidth, window.innerHeight);
+        await session.setFPSLimit(60);
+        await session.play();
+      } catch (retryError) {
+        console.error('Error on retry:', retryError);
+        alert('Could not access camera. Please check your camera settings and reload the page.');
+      }
+    } else {
+      alert('Error accessing camera. Please make sure you have granted camera permissions and are using a supported browser.');
+    }
+    return;
   }
 
   //Assign Lens ID (left) and Group ID(Right) to camera kit
@@ -147,14 +185,24 @@ if (CONFIG.API_TOKEN === "__API_TOKEN__") {
         mediaStream.getVideoTracks()[0].stop()
       }
 
-      mediaStream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: isBackFacing ? "environment" : "user"
+      try {
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: isBackFacing ? "environment" : "user"
+          }
+        })
+      } catch (error) {
+        if (error.name === 'OverconstrainedError') {
+          // If specific facing mode fails, try without it
+          mediaStream = await navigator.mediaDevices.getUserMedia({
+            video: true
+          })
+        } else {
+          throw error;
         }
-      })
+      }
 
       const source = createMediaStreamSource(mediaStream, {
-        // NOTE: This is important for world facing experiences
         cameraType: isBackFacing ? "environment" : "user",
       })
 
@@ -167,7 +215,13 @@ if (CONFIG.API_TOKEN === "__API_TOKEN__") {
       await session.play()
     } catch (error) {
       console.error('Error switching camera:', error.name, error.message)
-      alert('Failed to switch camera. Please check your device permissions.')
+      if (error.name === 'NotAllowedError') {
+        alert('Camera access was denied. Please grant camera permissions and reload the page.')
+      } else if (error.name === 'NotFoundError') {
+        alert('Could not find the ' + (isBackFacing ? 'back' : 'front') + ' camera.')
+      } else {
+        alert('Failed to switch camera. Please check your device permissions.')
+      }
       // Revert the isBackFacing flag since we failed to switch
       isBackFacing = !isBackFacing
     }
