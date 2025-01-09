@@ -47,7 +47,18 @@ if (CONFIG.API_TOKEN === "__API_TOKEN__") {
   }
 
   try {
-    // First check if we have permissions
+    // First explicitly request permissions on desktop
+    await navigator.permissions.query({ name: 'camera' })
+      .then(async (permissionStatus) => {
+        if (permissionStatus.state === 'denied') {
+          throw new Error('Camera permission was denied');
+        }
+      })
+      .catch(error => {
+        console.log('Permissions API not supported, falling back to getUserMedia');
+      });
+
+    // Then check available devices
     const permissions = await navigator.mediaDevices.enumerateDevices();
     const videoDevices = permissions.filter(device => device.kind === 'videoinput');
     
@@ -55,8 +66,18 @@ if (CONFIG.API_TOKEN === "__API_TOKEN__") {
       throw new Error('No video devices found');
     }
 
-    // Request media stream with set camera preference
-    let mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+    // For desktop browsers, try a more basic constraint first
+    let mediaStream;
+    try {
+      mediaStream = await navigator.mediaDevices.getUserMedia({
+        video: true,
+        audio: false
+      });
+    } catch (initialError) {
+      console.warn('Failed with basic constraints, trying specified constraints:', initialError);
+      mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+    }
+
     const source = createMediaStreamSource(mediaStream, { cameraType: "user" });
 
     //Set up source settings so that it renders out correctly on browser
@@ -68,8 +89,8 @@ if (CONFIG.API_TOKEN === "__API_TOKEN__") {
     await session.play(); //plays live target by default
   } catch (error) {
     console.error('Error accessing camera:', error.name, error.message);
-    if (error.name === 'NotAllowedError') {
-      alert('Camera access was denied. Please grant camera permissions and reload the page.');
+    if (error.name === 'NotAllowedError' || error.message === 'Camera permission was denied') {
+      alert('Camera access was denied. Please grant camera permissions in your browser settings and reload the page.\n\nIn Chrome: Click the camera icon in the address bar and select "Allow".');
     } else if (error.name === 'NotFoundError') {
       alert('No camera found on your device.');
     } else if (error.name === 'NotReadableError') {
