@@ -28,13 +28,23 @@ if (CONFIG.API_TOKEN === "__API_TOKEN__") {
   //'environment' = back camera
   const constraints = {
     video: {
-      facingMode: "user"
+      facingMode: "user",
+      width: { ideal: 3840, min: 1280 },  // 4K width
+      height: { ideal: 2160, min: 720 },  // 4K height (16:9 aspect ratio)
+      aspectRatio: { ideal: 16/9 }  // Add aspect ratio constraint
     },
     audio: false // Optional: Disable microphone
   }
 
   //Get canvas element for live render target
   const liveRenderTarget = document.getElementById("canvas")
+
+  // Set canvas size to maintain aspect ratio
+  const aspectRatio = 16/9;
+  const width = window.innerWidth;
+  const height = width / aspectRatio;
+  liveRenderTarget.style.width = '100%';
+  liveRenderTarget.style.height = 'auto';
 
   //Create camera kit session and assign liveRenderTarget canvas to render out live render target from camera kit
   const session = await cameraKit.createSession({ liveRenderTarget })
@@ -66,16 +76,22 @@ if (CONFIG.API_TOKEN === "__API_TOKEN__") {
       throw new Error('No video devices found');
     }
 
-    // For desktop browsers, try a more basic constraint first
+    // For desktop browsers, try with 4K constraints first
     let mediaStream;
     try {
+      mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+    } catch (initialError) {
+      console.warn('Failed with 4K constraints, trying HD:', initialError);
+      // Fallback to HD if 4K fails
       mediaStream = await navigator.mediaDevices.getUserMedia({
-        video: true,
+        video: {
+          facingMode: "user",
+          width: { ideal: 1920, min: 1280 },
+          height: { ideal: 1080, min: 720 },  // Fix height for HD (1080p)
+          aspectRatio: { ideal: 16/9 }
+        },
         audio: false
       });
-    } catch (initialError) {
-      console.warn('Failed with basic constraints, trying specified constraints:', initialError);
-      mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
     }
 
     const source = createMediaStreamSource(mediaStream, { cameraType: "user" });
@@ -209,14 +225,22 @@ if (CONFIG.API_TOKEN === "__API_TOKEN__") {
       try {
         mediaStream = await navigator.mediaDevices.getUserMedia({
           video: {
-            facingMode: isBackFacing ? "environment" : "user"
+            facingMode: isBackFacing ? "environment" : "user",
+            width: { ideal: 3840, min: 1280 },  // 4K width
+            height: { ideal: 2160, min: 720 },  // 4K height (16:9)
+            aspectRatio: { ideal: 16/9 }
           }
         })
       } catch (error) {
         if (error.name === 'OverconstrainedError') {
-          // If specific facing mode fails, try without it
+          // If 4K fails, try HD
           mediaStream = await navigator.mediaDevices.getUserMedia({
-            video: true
+            video: {
+              facingMode: isBackFacing ? "environment" : "user",
+              width: { ideal: 1920, min: 1280 },
+              height: { ideal: 1080, min: 720 },  // Fix height for HD (1080p)
+              aspectRatio: { ideal: 16/9 }
+            }
           })
         } else {
           throw error;
