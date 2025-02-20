@@ -12,6 +12,8 @@ if (CONFIG.API_TOKEN === "__API_TOKEN__") {
   let recordedChunks = []
   let isBackFacing = false
   let recordPressedCount = 0
+  let processedVideo = null
+  const loadingIcon = document.getElementById('loading')
 
   const ffmpeg = new FFmpeg()
   //Replace with your own api token, lens id, and group id
@@ -141,7 +143,6 @@ if (CONFIG.API_TOKEN === "__API_TOKEN__") {
   const recordOutline = document.getElementById("outline")
   const actionbutton = document.getElementById("action-buttons")
   const switchButton = document.getElementById("switch-button")
-  const loadingIcon = document.getElementById("loading")
   const backButtonContainer = document.getElementById("back-button-container")
 
   recordButton.addEventListener("click", async () => {
@@ -300,68 +301,55 @@ if (CONFIG.API_TOKEN === "__API_TOKEN__") {
 
   //Function to setup media recorder and start recording
   function manageMediaRecorder(session) {
-    console.log("session output capture");
-    // Reduce frame rate for mobile devices
-    const fps = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) ? 30 : 60;
-    const ms = liveRenderTarget.captureStream(fps);
-    
-    // Check for mobile device
-    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-    
-    // Determine best MIME type based on device/browser
-    let mimeType;
-    if (isMobile && MediaRecorder.isTypeSupported('video/mp4')) {
-      mimeType = 'video/mp4';
-    } else if (MediaRecorder.isTypeSupported('video/webm;codecs=h264')) {
-      mimeType = 'video/webm;codecs=h264';
-    } else if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9')) {
-      mimeType = 'video/webm;codecs=vp9';
-    } else if (MediaRecorder.isTypeSupported('video/webm;codecs=vp8')) {
-      mimeType = 'video/webm;codecs=vp8';
-    } else {
-      mimeType = 'video/webm';
+    console.log("session output capture")
+    const ms = liveRenderTarget.captureStream(60)
+    mediaRecorder = new MediaRecorder(ms, { mimeType: "video/mp4" })
+    console.log("create media recorder")
+    recordedChunks = []
+    // Handle recorded data once it is available
+    mediaRecorder.ondataavailable = (event) => {
+      console.log("start record")
+
+      if (event.data && event.data.size > 0) {
+        recordedChunks.push(event.data)
+      }
     }
-
-    console.log("Using MIME type:", mimeType);
-    
-    // Adjust bitrate for mobile
-    const videoBitsPerSecond = isMobile ? 1000000 : 2500000; // 1 Mbps for mobile, 2.5 Mbps for desktop
-    
-    try {
-      mediaRecorder = new MediaRecorder(ms, {
-        mimeType: mimeType,
-        videoBitsPerSecond: videoBitsPerSecond
-      });
-      
-      console.log("MediaRecorder created with settings:", 
-        mediaRecorder.videoBitsPerSecond, "bps",
-        "mimeType:", mediaRecorder.mimeType
-      );
-
-      recordedChunks = [];
-      
-      // Request data more frequently on mobile
-      const timeSlice = isMobile ? 500 : 1000; // 500ms for mobile, 1000ms for desktop
-      
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data && event.data.size > 0) {
-          console.log("Received chunk size:", event.data.size);
-          recordedChunks.push(event.data);
+    // Handle recording data when recording stopped
+    mediaRecorder.onstop = async () => {
+      console.log("stop record")
+      try {
+        //display loading icon while video is being processed
+        if (loadingIcon) {
+          loadingIcon.style.display = "block"
+        } else {
+          console.warn("Loading icon element not found")
         }
-      };
 
-      mediaRecorder.onerror = (event) => {
-        console.error("MediaRecorder error:", event.error);
-        alert("Recording failed. Please try again.");
-      };
-
-      // Start recording
-      mediaRecorder.start(timeSlice);
-      
-    } catch (error) {
-      console.error("Failed to create MediaRecorder:", error);
-      alert("Your device may not support video recording. Please try a different browser.");
+        const blob = new Blob(recordedChunks, { type: "video/mp4" })
+        console.log("Created initial blob:", blob.size, "bytes")
+        
+        const fixedBlob = await fixVideoDuration(blob)
+        console.log("Created fixed blob:", fixedBlob.size, "bytes")
+        
+        // Generate a URL for the fixed video
+        const url = URL.createObjectURL(fixedBlob)
+        
+        //hide loading icon once video is done processing
+        if (loadingIcon) {
+          loadingIcon.style.display = "none"
+        }
+        
+        displayPostRecordButtons(url, fixedBlob)
+      } catch (error) {
+        console.error("Error in recording stop handler:", error)
+        if (loadingIcon) {
+          loadingIcon.style.display = "none"
+        }
+        alert("Error processing video. Please try again.")
+      }
     }
+    //Start recording
+    mediaRecorder.start()
   }
 
   function displayPostRecordButtons(url, fixedBlob) {
@@ -381,20 +369,7 @@ if (CONFIG.API_TOKEN === "__API_TOKEN__") {
     //Logic for when share button is selected
     document.getElementById("share-button").onclick = async () => {
       try {
-        if (!fixedBlob) {
-          console.error("No video data available to share");
-          alert("Error: No video data available to share");
-          return;
-        }
-
         const file = new File([fixedBlob], "recording.mp4", { type: "video/mp4" }) // Convert blob to file
-        console.log("File size to share:", file.size, "bytes");  // Debug log
-
-        if (file.size < 1000) {  // If file is suspiciously small
-          console.error("Video file is too small, might be corrupted");
-          alert("Error: Video file appears to be corrupted");
-          return;
-        }
 
         // Check if sharing files is supported
         if (navigator.canShare && navigator.canShare({ files: [file] })) {
@@ -406,11 +381,9 @@ if (CONFIG.API_TOKEN === "__API_TOKEN__") {
           console.log("File shared successfully")
         } else {
           console.error("Sharing files is not supported on this device.")
-          alert("Sharing files is not supported on this device. Try downloading instead.");
         }
       } catch (error) {
         console.error("Error while sharing:", error)
-        alert("Error sharing video: " + error.message);
       }
     }
 
