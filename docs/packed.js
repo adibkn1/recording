@@ -36593,66 +36593,68 @@ if (main_CONFIG.API_TOKEN === "__API_TOKEN__") {
 
   //Function to setup media recorder and start recording
   function manageMediaRecorder(session) {
-    console.log("session output capture")
-    const ms = liveRenderTarget.captureStream(60)
+    console.log("session output capture");
+    // Reduce frame rate for mobile devices
+    const fps = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) ? 30 : 60;
+    const ms = liveRenderTarget.captureStream(fps);
     
-    // Check supported MIME types
-    const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus') 
-      ? 'video/webm;codecs=vp9,opus'
-      : MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus')
-        ? 'video/webm;codecs=vp8,opus'
-        : 'video/webm';
+    // Check for mobile device
+    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
     
+    // Determine best MIME type based on device/browser
+    let mimeType;
+    if (isMobile && MediaRecorder.isTypeSupported('video/mp4')) {
+      mimeType = 'video/mp4';
+    } else if (MediaRecorder.isTypeSupported('video/webm;codecs=h264')) {
+      mimeType = 'video/webm;codecs=h264';
+    } else if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9')) {
+      mimeType = 'video/webm;codecs=vp9';
+    } else if (MediaRecorder.isTypeSupported('video/webm;codecs=vp8')) {
+      mimeType = 'video/webm;codecs=vp8';
+    } else {
+      mimeType = 'video/webm';
+    }
+
     console.log("Using MIME type:", mimeType);
     
-    mediaRecorder = new MediaRecorder(ms, { 
-      mimeType: mimeType,
-      videoBitsPerSecond: 2500000 // 2.5 Mbps for good quality
-    });
+    // Adjust bitrate for mobile
+    const videoBitsPerSecond = isMobile ? 1000000 : 2500000; // 1 Mbps for mobile, 2.5 Mbps for desktop
     
-    console.log("MediaRecorder created with settings:", mediaRecorder.videoBitsPerSecond, "bps");
-    recordedChunks = []
-    
-    // Request data more frequently for better handling
-    mediaRecorder.ondataavailable = (event) => {
-      console.log("Received data chunk of size:", event.data.size, "bytes");
-      if (event.data && event.data.size > 0) {
-        recordedChunks.push(event.data)
-      }
-    }
+    try {
+      mediaRecorder = new MediaRecorder(ms, {
+        mimeType: mimeType,
+        videoBitsPerSecond: videoBitsPerSecond
+      });
+      
+      console.log("MediaRecorder created with settings:", 
+        mediaRecorder.videoBitsPerSecond, "bps",
+        "mimeType:", mediaRecorder.mimeType
+      );
 
-    // Handle recording data when recording stopped
-    mediaRecorder.onstop = async () => {
-      console.log("stop record")
-      //display loading icon while video is being processed
-      loadingIcon.style.display = "block"
+      recordedChunks = [];
       
-      // Create blob with the correct MIME type from recording
-      const blob = new Blob(recordedChunks, { type: mimeType })
-      console.log("Initial blob size:", blob.size, "bytes");
+      // Request data more frequently on mobile
+      const timeSlice = isMobile ? 500 : 1000; // 500ms for mobile, 1000ms for desktop
       
-      try {
-        const fixedBlob = await fixVideoDuration(blob)
-        console.log("Fixed blob size:", fixedBlob.size, "bytes");
-        
-        if (fixedBlob.size < 1000) {
-          throw new Error("Processed video file is too small");
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data && event.data.size > 0) {
+          console.log("Received chunk size:", event.data.size);
+          recordedChunks.push(event.data);
         }
-        
-        // Generate a URL for the fixed video
-        const url = URL.createObjectURL(fixedBlob)
-        //hide loading icon once video is done processing
-        loadingIcon.style.display = "none"
-        displayPostRecordButtons(url, fixedBlob)
-      } catch (error) {
-        console.error("Error processing video:", error);
-        loadingIcon.style.display = "none";
-        alert("Error processing video. Please try recording again.");
-      }
-    }
+      };
 
-    // Start recording with timeslice to get frequent ondataavailable events
-    mediaRecorder.start(1000); // Get data every second
+      mediaRecorder.onerror = (event) => {
+        console.error("MediaRecorder error:", event.error);
+        alert("Recording failed. Please try again.");
+      };
+
+      // Start recording
+      mediaRecorder.start(timeSlice);
+      
+    } catch (error) {
+      console.error("Failed to create MediaRecorder:", error);
+      alert("Your device may not support video recording. Please try a different browser.");
+    }
   }
 
   function displayPostRecordButtons(url, fixedBlob) {
