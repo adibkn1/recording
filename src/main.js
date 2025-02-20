@@ -274,15 +274,29 @@ if (CONFIG.API_TOKEN === "__API_TOKEN__") {
 
   //Function to setup media recorder and start recording
   function manageMediaRecorder(session) {
-    console.log("session output cature")
+    console.log("session output capture")
     const ms = liveRenderTarget.captureStream(60)
-    mediaRecorder = new MediaRecorder(ms, { mimeType: "video/mp4" })
-    console.log("create media recorder")
+    
+    // Check supported MIME types
+    const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus') 
+      ? 'video/webm;codecs=vp9,opus'
+      : MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus')
+        ? 'video/webm;codecs=vp8,opus'
+        : 'video/webm';
+    
+    console.log("Using MIME type:", mimeType);
+    
+    mediaRecorder = new MediaRecorder(ms, { 
+      mimeType: mimeType,
+      videoBitsPerSecond: 2500000 // 2.5 Mbps for good quality
+    });
+    
+    console.log("MediaRecorder created with settings:", mediaRecorder.videoBitsPerSecond, "bps");
     recordedChunks = []
+    
     // Handle recorded data once it is available
     mediaRecorder.ondataavailable = (event) => {
-      console.log("start record")
-
+      console.log("Received data chunk of size:", event.data.size, "bytes");
       if (event.data && event.data.size > 0) {
         recordedChunks.push(event.data)
       }
@@ -298,7 +312,7 @@ if (CONFIG.API_TOKEN === "__API_TOKEN__") {
       const url = URL.createObjectURL(fixedBlob)
       //hide loading icon once video is done processing
       loadingIcon.style.display = "none"
-      displayPostRecordButtons(url)
+      displayPostRecordButtons(url, fixedBlob)
     }
     //Start recording
     mediaRecorder.start()
@@ -321,7 +335,20 @@ if (CONFIG.API_TOKEN === "__API_TOKEN__") {
     //Logic for when share button is selected
     document.getElementById("share-button").onclick = async () => {
       try {
+        if (!fixedBlob) {
+          console.error("No video data available to share");
+          alert("Error: No video data available to share");
+          return;
+        }
+
         const file = new File([fixedBlob], "recording.mp4", { type: "video/mp4" }) // Convert blob to file
+        console.log("File size to share:", file.size, "bytes");  // Debug log
+
+        if (file.size < 1000) {  // If file is suspiciously small
+          console.error("Video file is too small, might be corrupted");
+          alert("Error: Video file appears to be corrupted");
+          return;
+        }
 
         // Check if sharing files is supported
         if (navigator.canShare && navigator.canShare({ files: [file] })) {
@@ -333,9 +360,11 @@ if (CONFIG.API_TOKEN === "__API_TOKEN__") {
           console.log("File shared successfully")
         } else {
           console.error("Sharing files is not supported on this device.")
+          alert("Sharing files is not supported on this device. Try downloading instead.");
         }
       } catch (error) {
         console.error("Error while sharing:", error)
+        alert("Error sharing video: " + error.message);
       }
     }
 
