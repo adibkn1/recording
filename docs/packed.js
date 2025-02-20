@@ -36470,7 +36470,7 @@ if (main_CONFIG.API_TOKEN === "__API_TOKEN__") {
 
   //To convert recorded video to proper mp4 format that can be shared to social media
   async function fixVideoDuration(blob) {
-    console.log(blob)
+    console.log("Input blob:", blob.type, blob.size, "bytes");
     // Load FFmpeg.js
     const baseURL = "https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd"
     await ffmpeg.load({
@@ -36479,18 +36479,28 @@ if (main_CONFIG.API_TOKEN === "__API_TOKEN__") {
     })
 
     // Write the input video blob to FFmpeg's virtual filesystem
-    await ffmpeg.writeFile("input.mp4", await main_fetchFile(blob))
+    await ffmpeg.writeFile("input.webm", await main_fetchFile(blob))
 
-    // Reprocess the video to ensure metadata is added correctly
-    await ffmpeg.exec(["-i", "input.mp4", "-movflags", "faststart", "-c", "copy", "output.mp4"])
+    // Convert WebM to MP4 with proper encoding
+    await ffmpeg.exec([
+      "-i", "input.webm",
+      "-c:v", "libx264",  // Use H.264 codec
+      "-preset", "fast",   // Fast encoding
+      "-crf", "23",       // Reasonable quality
+      "-movflags", "+faststart",
+      "-y",               // Overwrite output
+      "output.mp4"
+    ])
 
     // Read the fixed video file from the virtual filesystem
     const fixedData = await ffmpeg.readFile("output.mp4")
+    console.log("Processed video size:", fixedData.length, "bytes");
 
     // Create a new Blob for the fixed video
-    const fixedBlob = new Blob([fixedData.buffer], { type: "video/mp4" })
+    const fixedBlob = new Blob([fixedData.buffer], { 
+      type: "video/mp4; codecs=avc1.42E01E" 
+    })
 
-    // Return the fixed Blob
     return fixedBlob
   }
 
@@ -36505,63 +36515,89 @@ if (main_CONFIG.API_TOKEN === "__API_TOKEN__") {
     }
   }
 
-  //Fucntion to switch camera between front & back
+  //Function to switch camera between front & back
   async function updateCamera(session) {
     isBackFacing = !isBackFacing
 
     try {
       if (mediaStream) {
-        session.pause()
-        mediaStream.getVideoTracks()[0].stop()
+        await session.pause()
+        mediaStream.getVideoTracks().forEach(track => track.stop())
       }
 
       try {
         mediaStream = await navigator.mediaDevices.getUserMedia({
           video: {
-            facingMode: isBackFacing ? "environment" : "user",
-            width: { ideal: 3840, min: 1280 },  // 4K width
-            height: { ideal: 2160, min: 720 },  // 4K height (16:9)
+            facingMode: { exact: isBackFacing ? "environment" : "user" },
+            width: { ideal: 3840, min: 1280 },
+            height: { ideal: 2160, min: 720 },
             aspectRatio: { ideal: 16/9 }
           }
         })
       } catch (error) {
-        if (error.name === 'OverconstrainedError') {
-          // If 4K fails, try HD
-          mediaStream = await navigator.mediaDevices.getUserMedia({
-            video: {
-              facingMode: isBackFacing ? "environment" : "user",
-              width: { ideal: 1920, min: 1280 },
-              height: { ideal: 1080, min: 720 },  // Fix height for HD (1080p)
-              aspectRatio: { ideal: 16/9 }
-            }
-          })
-        } else {
-          throw error;
-        }
+        console.warn('Failed with 4K constraints, trying HD:', error);
+        // If 4K fails, try HD
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: { exact: isBackFacing ? "environment" : "user" },
+            width: { ideal: 1920, min: 1280 },
+            height: { ideal: 1080, min: 720 },
+            aspectRatio: { ideal: 16/9 }
+          }
+        })
       }
 
       const source = main_createMediaStreamSource(mediaStream, {
-        cameraType: isBackFacing ? "environment" : "user",
+        cameraType: isBackFacing ? "environment" : "user"
       })
 
       await session.setSource(source)
+      
+      // Apply transform based on camera type
       if (!isBackFacing) {
         source.setTransform(main_Transform2D_Transform2D.MirrorX)
+      } else {
+        source.setTransform(main_Transform2D_Transform2D.None)  // Reset transform for back camera
       }
-      await source.setRenderSize(window.innerWidth, window.innerHeight)
 
+      await source.setRenderSize(window.innerWidth, window.innerHeight)
       await session.play()
+
+      console.log('Camera switched to:', isBackFacing ? 'back' : 'front');
     } catch (error) {
       console.error('Error switching camera:', error.name, error.message)
       if (error.name === 'NotAllowedError') {
         alert('Camera access was denied. Please grant camera permissions and reload the page.')
       } else if (error.name === 'NotFoundError') {
         alert('Could not find the ' + (isBackFacing ? 'back' : 'front') + ' camera.')
+      } else if (error.name === 'OverconstrainedError') {
+        // Try one last time with basic constraints
+        try {
+          mediaStream = await navigator.mediaDevices.getUserMedia({
+            video: {
+              facingMode: isBackFacing ? "environment" : "user"
+            }
+          });
+          const source = main_createMediaStreamSource(mediaStream, {
+            cameraType: isBackFacing ? "environment" : "user"
+          });
+          await session.setSource(source);
+          if (!isBackFacing) {
+            source.setTransform(main_Transform2D_Transform2D.MirrorX)
+          } else {
+            source.setTransform(main_Transform2D_Transform2D.None)
+          }
+          await source.setRenderSize(window.innerWidth, window.innerHeight);
+          await session.play();
+        } catch (retryError) {
+          console.error('Final camera switch attempt failed:', retryError);
+          alert('Failed to switch camera. Your device might not support camera switching.');
+          isBackFacing = !isBackFacing;  // Revert the flag
+        }
       } else {
         alert('Failed to switch camera. Please check your device permissions.')
+        isBackFacing = !isBackFacing
       }
-      // Revert the isBackFacing flag since we failed to switch
-      isBackFacing = !isBackFacing
     }
   }
 
@@ -36570,12 +36606,12 @@ if (main_CONFIG.API_TOKEN === "__API_TOKEN__") {
     console.log("session output capture")
     const ms = liveRenderTarget.captureStream(60)
     
-    // Check supported MIME types
-    const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus') 
-      ? 'video/webm;codecs=vp9,opus'
-      : MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus')
-        ? 'video/webm;codecs=vp8,opus'
-        : 'video/webm';
+    // Check supported MIME types - prefer VP8 for better compatibility
+    const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp8') 
+      ? 'video/webm;codecs=vp8'
+      : MediaRecorder.isTypeSupported('video/webm')
+        ? 'video/webm'
+        : 'video/webm;codecs=vp9';
     
     console.log("Using MIME type:", mimeType);
     
@@ -36587,28 +36623,50 @@ if (main_CONFIG.API_TOKEN === "__API_TOKEN__") {
     console.log("MediaRecorder created with settings:", mediaRecorder.videoBitsPerSecond, "bps");
     recordedChunks = []
     
-    // Handle recorded data once it is available
+    // Request data more frequently for better handling
     mediaRecorder.ondataavailable = (event) => {
       console.log("Received data chunk of size:", event.data.size, "bytes");
       if (event.data && event.data.size > 0) {
         recordedChunks.push(event.data)
       }
     }
+
     // Handle recording data when recording stopped
     mediaRecorder.onstop = async () => {
       console.log("stop record")
       //display loading icon while video is being processed
       loadingIcon.style.display = "block"
-      const blob = new Blob(recordedChunks, { type: "video/mp4" })
-      const fixedBlob = await fixVideoDuration(blob)
-      // Generate a URL for the fixed video
-      const url = URL.createObjectURL(fixedBlob)
-      //hide loading icon once video is done processing
-      loadingIcon.style.display = "none"
-      displayPostRecordButtons(url, fixedBlob)
+      
+      try {
+        // Create blob with the correct MIME type from recording
+        const blob = new Blob(recordedChunks, { type: mimeType })
+        console.log("Initial WebM blob size:", blob.size, "bytes");
+        
+        if (blob.size < 1000) {
+          throw new Error("Recording failed - no data received");
+        }
+
+        const fixedBlob = await fixVideoDuration(blob)
+        console.log("Converted MP4 blob size:", fixedBlob.size, "bytes");
+        
+        if (fixedBlob.size < 1000) {
+          throw new Error("Video conversion failed");
+        }
+        
+        // Generate a URL for the fixed video
+        const url = URL.createObjectURL(fixedBlob)
+        //hide loading icon once video is done processing
+        loadingIcon.style.display = "none"
+        displayPostRecordButtons(url, fixedBlob)
+      } catch (error) {
+        console.error("Error processing video:", error);
+        loadingIcon.style.display = "none";
+        alert("Error processing video. Please try recording again.");
+      }
     }
-    //Start recording
-    mediaRecorder.start()
+
+    // Start recording with timeslice to get frequent ondataavailable events
+    mediaRecorder.start(1000); // Get data every second
   }
 
   function displayPostRecordButtons(url, fixedBlob) {
@@ -36634,13 +36692,20 @@ if (main_CONFIG.API_TOKEN === "__API_TOKEN__") {
           return;
         }
 
-        const file = new File([fixedBlob], "recording.mp4", { type: "video/mp4" }) // Convert blob to file
-        console.log("File size to share:", file.size, "bytes");  // Debug log
+        // Create a new blob with explicit MIME type and codecs
+        const shareBlob = new Blob([fixedBlob], { 
+          type: "video/mp4; codecs=avc1.42E01E"
+        });
 
-        if (file.size < 1000) {  // If file is suspiciously small
-          console.error("Video file is too small, might be corrupted");
-          alert("Error: Video file appears to be corrupted");
-          return;
+        const file = new File([shareBlob], "recording.mp4", { 
+          type: "video/mp4",
+          lastModified: new Date().getTime()
+        });
+
+        console.log("File prepared for sharing:", file.type, file.size, "bytes");
+
+        if (file.size < 1000) {
+          throw new Error("Video file is too small");
         }
 
         // Check if sharing files is supported
@@ -36648,16 +36713,21 @@ if (main_CONFIG.API_TOKEN === "__API_TOKEN__") {
           await navigator.share({
             files: [file],
             title: "Recorded Video",
-            text: "Check out this recording!",
+            text: "Check out this recording!"
           })
           console.log("File shared successfully")
         } else {
-          console.error("Sharing files is not supported on this device.")
-          alert("Sharing files is not supported on this device. Try downloading instead.");
+          throw new Error("Sharing not supported on this device");
         }
       } catch (error) {
-        console.error("Error while sharing:", error)
-        alert("Error sharing video: " + error.message);
+        console.error("Error while sharing:", error);
+        // Fallback to download if sharing fails
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "recording.mp4";
+        a.click();
+        a.remove();
+        alert("Sharing failed. Video has been downloaded instead.");
       }
     }
 
