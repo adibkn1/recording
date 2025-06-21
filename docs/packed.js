@@ -36285,7 +36285,7 @@ const main_toBlobURL = async (url, mimeType, progress = false, cb) => {
 
 ;// ./src/config.js
 const main_CONFIG = {
-  LENS_ID: "d74ecc5c-083c-4ece-8622-ff0fe93ec04d",
+  LENS_ID: "587783f5-30fc-4d7e-8346-991e44e784a6",
   GROUP_ID: "fdd0879f-c570-490e-9dfc-cba0f122699f",
   API_TOKEN: "eyJhbGciOiJIUzI1NiIsImtpZCI6IkNhbnZhc1MyU0hNQUNQcm9kIiwidHlwIjoiSldUIn0.eyJhdWQiOiJjYW52YXMtY2FudmFzYXBpIiwiaXNzIjoiY2FudmFzLXMyc3Rva2VuIiwibmJmIjoxNzA2NzExNzk4LCJzdWIiOiJhNWQ0ZjU2NC0yZTM0LTQyN2EtODI1Ni03OGE2NTFhODc0ZTR-U1RBR0lOR35mMzBjN2JmNy1lNjhjLTRhNzUtOWFlNC05NmJjOTNkOGIyOGYifQ.xLriKo1jpzUBAc1wfGpLVeQ44Ewqncblby-wYE1vRu0",
 }
