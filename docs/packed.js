@@ -36323,7 +36323,7 @@ if (main_CONFIG.API_TOKEN === "__API_TOKEN__") {
   //'environment' = back camera
   const constraints = {
     video: {
-      facingMode: "user",
+      facingMode: "environment",
       width: { ideal: 3840, min: 1280 },  // 4K width
       height: { ideal: 2160, min: 720 },  // 4K height (16:9 aspect ratio)
       aspectRatio: { ideal: 16/9 }  // Add aspect ratio constraint
@@ -36380,7 +36380,7 @@ if (main_CONFIG.API_TOKEN === "__API_TOKEN__") {
       // Fallback to HD if 4K fails
       mediaStream = await navigator.mediaDevices.getUserMedia({
         video: {
-          facingMode: "user",
+          facingMode: "environment",
           width: { ideal: 1920, min: 1280 },
           height: { ideal: 1080, min: 720 },  // Fix height for HD (1080p)
           aspectRatio: { ideal: 16/9 }
@@ -36389,12 +36389,10 @@ if (main_CONFIG.API_TOKEN === "__API_TOKEN__") {
       });
     }
 
-    const source = main_createMediaStreamSource(mediaStream, { cameraType: "user" });
+    const source = main_createMediaStreamSource(mediaStream, { cameraType: "environment" });
 
     //Set up source settings so that it renders out correctly on browser
     await session.setSource(source);
-    //only for front camera use
-    source.setTransform(main_Transform2D_Transform2D.MirrorX);
     await source.setRenderSize(window.innerWidth, window.innerHeight);
     await session.setFPSLimit(60);
     await session.play(); //plays live target by default
@@ -36410,9 +36408,8 @@ if (main_CONFIG.API_TOKEN === "__API_TOKEN__") {
       // If we get an OverconstrainedError, try again with no constraints
       try {
         let mediaStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-        const source = main_createMediaStreamSource(mediaStream, { cameraType: "user" });
+        const source = main_createMediaStreamSource(mediaStream, { cameraType: "environment" });
         await session.setSource(source);
-        source.setTransform(main_Transform2D_Transform2D.MirrorX);
         await source.setRenderSize(window.innerWidth, window.innerHeight);
         await session.setFPSLimit(60);
         await session.play();
