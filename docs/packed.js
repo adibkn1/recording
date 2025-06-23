@@ -36306,6 +36306,9 @@ if (main_CONFIG.API_TOKEN === "__API_TOKEN__") {
   let isBackFacing = false
   let recordPressedCount = 0
   let processedVideo = null
+  let lastFrameTime = 0
+  let frameCount = 0
+  let fpsInterval
   const loadingIcon = document.getElementById('loading')
 
   const ffmpeg = new main_FFmpeg()
@@ -36314,8 +36317,12 @@ if (main_CONFIG.API_TOKEN === "__API_TOKEN__") {
   const lensID = main_CONFIG.LENS_ID
   const groupID = main_CONFIG.GROUP_ID
 
+  // Create Camera Kit with optimized settings
   const cameraKit = await main_bootstrapCameraKit({
     apiToken: apiToken,
+    options: {
+      threadedProcessing: true, // Enable threaded processing for better performance
+    }
   })
 
   //Set which camera will be used
@@ -36324,9 +36331,9 @@ if (main_CONFIG.API_TOKEN === "__API_TOKEN__") {
   const constraints = {
     video: {
       facingMode: "environment",
-      width: { ideal: 3840, min: 1280 },  // 4K width
-      height: { ideal: 2160, min: 720 },  // 4K height (16:9 aspect ratio)
-      aspectRatio: { ideal: 16/9 }  // Add aspect ratio constraint
+      width: { ideal: 1920, min: 1280 },  // Reduced from 4K to 1080p for better performance
+      height: { ideal: 1080, min: 720 },
+      aspectRatio: { ideal: 16/9 }
     },
     audio: false // Optional: Disable microphone
   }
@@ -36341,8 +36348,14 @@ if (main_CONFIG.API_TOKEN === "__API_TOKEN__") {
   liveRenderTarget.style.width = '100%';
   liveRenderTarget.style.height = 'auto';
 
-  //Create camera kit session and assign liveRenderTarget canvas to render out live render target from camera kit
-  const session = await cameraKit.createSession({ liveRenderTarget })
+  // Create camera kit session with optimized settings
+  const session = await cameraKit.createSession({ 
+    liveRenderTarget,
+    renderOptions: {
+      preferredFrameRate: 30, // Lower frame rate for more stable performance
+      gpuAcceleration: true   // Enable GPU acceleration
+    }
+  })
 
   //Check if getUserMedia is supported
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -36371,31 +36384,37 @@ if (main_CONFIG.API_TOKEN === "__API_TOKEN__") {
       throw new Error('No video devices found');
     }
 
-    // For desktop browsers, try with 4K constraints first
+    // Try with HD constraints first for better performance
     let mediaStream;
     try {
       mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
     } catch (initialError) {
-      console.warn('Failed with 4K constraints, trying HD:', initialError);
-      // Fallback to HD if 4K fails
+      console.warn('Failed with HD constraints, trying lower resolution:', initialError);
+      // Fallback to lower resolution if HD fails
       mediaStream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: "environment",
-          width: { ideal: 1920, min: 1280 },
-          height: { ideal: 1080, min: 720 },  // Fix height for HD (1080p)
-          aspectRatio: { ideal: 16/9 }
+          width: { ideal: 1280, min: 640 },
+          height: { ideal: 720, min: 480 }
         },
         audio: false
       });
     }
 
-    const source = main_createMediaStreamSource(mediaStream, { cameraType: "environment" });
+    const source = main_createMediaStreamSource(mediaStream, { 
+      cameraType: "environment",
+      enableLowLightBoost: true // Enable low light boost for better tracking
+    });
 
     //Set up source settings so that it renders out correctly on browser
     await session.setSource(source);
     await source.setRenderSize(window.innerWidth, window.innerHeight);
-    await session.setFPSLimit(60);
-    await session.play(); //plays live target by default
+    await session.setFPSLimit(30); // Reduced from 60 to 30 for better stability
+    
+    // Start monitoring FPS
+    startFPSMonitoring();
+    
+    await session.play();
   } catch (error) {
     console.error('Error accessing camera:', error.name, error.message);
     if (error.name === 'NotAllowedError' || error.message === 'Camera permission was denied') {
@@ -36405,13 +36424,13 @@ if (main_CONFIG.API_TOKEN === "__API_TOKEN__") {
     } else if (error.name === 'NotReadableError') {
       alert('Camera is already in use by another application.');
     } else if (error.name === 'OverconstrainedError') {
-      // If we get an OverconstrainedError, try again with no constraints
+      // If we get an OverconstrainedError, try again with minimal constraints
       try {
         let mediaStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
         const source = main_createMediaStreamSource(mediaStream, { cameraType: "environment" });
         await session.setSource(source);
         await source.setRenderSize(window.innerWidth, window.innerHeight);
-        await session.setFPSLimit(60);
+        await session.setFPSLimit(30);
         await session.play();
       } catch (retryError) {
         console.error('Error on retry:', retryError);
@@ -36421,6 +36440,55 @@ if (main_CONFIG.API_TOKEN === "__API_TOKEN__") {
       alert('Error accessing camera. Please make sure you have granted camera permissions and are using a supported browser.');
     }
     return;
+  }
+
+  // Function to monitor FPS
+  function startFPSMonitoring() {
+    // Clear any existing interval
+    if (fpsInterval) clearInterval(fpsInterval);
+    
+    fpsInterval = setInterval(() => {
+      const now = performance.now();
+      const elapsed = now - lastFrameTime;
+      
+      if (lastFrameTime !== 0) {
+        const fps = Math.round((frameCount * 1000) / elapsed);
+        console.log(`Current FPS: ${fps}`);
+        
+        // If FPS drops below threshold, try to optimize
+        if (fps < 20) {
+          console.warn('Low FPS detected, optimizing...');
+          optimizeForPerformance();
+        }
+      }
+      
+      lastFrameTime = now;
+      frameCount = 0;
+    }, 1000);
+    
+    // Hook into requestAnimationFrame to count frames
+    const originalRAF = window.requestAnimationFrame;
+    window.requestAnimationFrame = function(callback) {
+      frameCount++;
+      return originalRAF(callback);
+    };
+  }
+  
+  // Function to optimize performance when lag is detected
+  function optimizeForPerformance() {
+    // Reduce render size if needed
+    const currentWidth = window.innerWidth;
+    const currentHeight = window.innerHeight;
+    
+    if (currentWidth > 720) {
+      const newWidth = Math.max(720, currentWidth * 0.8);
+      const newHeight = newWidth / aspectRatio;
+      
+      if (source) {
+        source.setRenderSize(newWidth, newHeight)
+          .catch(err => console.error('Failed to reduce render size:', err));
+      }
+    }
   }
 
   //Assign Lens ID (left) and Group ID(Right) to camera kit
@@ -36517,26 +36585,26 @@ if (main_CONFIG.API_TOKEN === "__API_TOKEN__") {
         mediaStream = await navigator.mediaDevices.getUserMedia({
           video: {
             facingMode: { exact: isBackFacing ? "environment" : "user" },
-            width: { ideal: 3840, min: 1280 },
-            height: { ideal: 2160, min: 720 },
-            aspectRatio: { ideal: 16/9 }
-          }
-        })
-      } catch (error) {
-        console.warn('Failed with 4K constraints, trying HD:', error);
-        // If 4K fails, try HD
-        mediaStream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: { exact: isBackFacing ? "environment" : "user" },
             width: { ideal: 1920, min: 1280 },
             height: { ideal: 1080, min: 720 },
             aspectRatio: { ideal: 16/9 }
           }
         })
+      } catch (error) {
+        console.warn('Failed with HD constraints, trying lower resolution:', error);
+        // If HD fails, try lower resolution
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: isBackFacing ? "environment" : "user",
+            width: { ideal: 1280, min: 640 },
+            height: { ideal: 720, min: 480 }
+          }
+        })
       }
 
       const source = main_createMediaStreamSource(mediaStream, {
-        cameraType: isBackFacing ? "environment" : "user"
+        cameraType: isBackFacing ? "environment" : "user",
+        enableLowLightBoost: true // Enable low light boost for better tracking
       })
 
       await session.setSource(source)
@@ -36548,7 +36616,11 @@ if (main_CONFIG.API_TOKEN === "__API_TOKEN__") {
         source.setTransform(main_Transform2D_Transform2D.None)  // Reset transform for back camera
       }
 
-      await source.setRenderSize(window.innerWidth, window.innerHeight)
+      // Use a smaller render size for better performance
+      const currentWidth = Math.min(window.innerWidth, 1280);
+      const currentHeight = currentWidth / aspectRatio;
+      await source.setRenderSize(currentWidth, currentHeight)
+      
       await session.play()
 
       console.log('Camera switched to:', isBackFacing ? 'back' : 'front');
@@ -36567,7 +36639,8 @@ if (main_CONFIG.API_TOKEN === "__API_TOKEN__") {
             }
           });
           const source = main_createMediaStreamSource(mediaStream, {
-            cameraType: isBackFacing ? "environment" : "user"
+            cameraType: isBackFacing ? "environment" : "user",
+            enableLowLightBoost: true
           });
           await session.setSource(source);
           if (!isBackFacing) {
@@ -36575,7 +36648,7 @@ if (main_CONFIG.API_TOKEN === "__API_TOKEN__") {
           } else {
             source.setTransform(main_Transform2D_Transform2D.None)
           }
-          await source.setRenderSize(window.innerWidth, window.innerHeight);
+          await source.setRenderSize(Math.min(window.innerWidth, 1280), Math.min(window.innerHeight, 720));
           await session.play();
         } catch (retryError) {
           console.error('Final camera switch attempt failed:', retryError);
@@ -36608,23 +36681,23 @@ if (main_CONFIG.API_TOKEN === "__API_TOKEN__") {
     mediaRecorder.onstop = async () => {
       console.log("stop record")
       try {
-        //display loading icon while video is being processed
+      //display loading icon while video is being processed
         if (loadingIcon) {
-          loadingIcon.style.display = "block"
+      loadingIcon.style.display = "block"
         } else {
           console.warn("Loading icon element not found")
         }
 
-        const blob = new Blob(recordedChunks, { type: "video/mp4" })
+      const blob = new Blob(recordedChunks, { type: "video/mp4" })
         console.log("Created initial blob:", blob.size, "bytes")
         
-        const fixedBlob = await fixVideoDuration(blob)
+      const fixedBlob = await fixVideoDuration(blob)
         console.log("Created fixed blob:", fixedBlob.size, "bytes")
         
-        // Generate a URL for the fixed video
-        const url = URL.createObjectURL(fixedBlob)
+      // Generate a URL for the fixed video
+      const url = URL.createObjectURL(fixedBlob)
         
-        //hide loading icon once video is done processing
+      //hide loading icon once video is done processing
         if (loadingIcon) {
           loadingIcon.style.display = "none"
         }
@@ -36633,7 +36706,7 @@ if (main_CONFIG.API_TOKEN === "__API_TOKEN__") {
       } catch (error) {
         console.error("Error in recording stop handler:", error)
         if (loadingIcon) {
-          loadingIcon.style.display = "none"
+      loadingIcon.style.display = "none"
         }
         alert("Error processing video. Please try again.")
       }
